@@ -1,0 +1,28 @@
+version: '3'
+services:
+  hadoop-namenode:
+    image: 'uhopper/hadoop-namenode'
+    hostname: hadoop-namenode
+    volumes:
+       - /home/giovanni/code-sky/dockers/hadoop/hadoop-cfg:/etc/hadoop:ro
+    ports:
+      - "8020:8020"
+      - '50071:50070'
+    environment:
+      - CLUSTER_NAME=hadoop-sandbox
+      - HDFS_CONF_dfs_replication=1
+    networks:
+      - sandbox-cluster 
+  hadoop-datanode:       
+    image: "uhopper/hadoop-datanode"
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://hadoop-namenode:8020
+      - CLUSTER_NAME=hadoop-sandbox
+      - HDFS_CONF_dfs_replication=1
+    networks:
+      - sandbox-cluster
+    depends_on:
+      - "hadoop-namenode"
+networks:
+   sandbox-cluster:
+

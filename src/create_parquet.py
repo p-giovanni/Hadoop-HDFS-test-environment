@@ -20,7 +20,6 @@ import os
 import sys
 import time
 import datetime
-import argparse
 import logging
 from logging.handlers import RotatingFileHandler
 
@@ -152,9 +151,9 @@ def start_spark_session():
 # ----------------------------------------
 # validate_in_file
 # ----------------------------------------
-def validate_in_file(in_file, no_extension=False):
+def validate_in_file(in_file):
     """
-    Check the existence of the input file name and
+    Check the existence  of the input file name and
     returns the file name without the directory component
     (if any).
     The file extension is changed to .parquet
@@ -164,17 +163,19 @@ def validate_in_file(in_file, no_extension=False):
     """
     log = logging.getLogger('validate_in_file')
     log.info("validate_in_file ({0}) >>".format(in_file))
-    if not os.path.isfile(in_file):
-        msg = "The csv input file doesn't exist (" + in_file + ")"
-        log.fatal(msg)
-        sys.exit(1)
-    file_name = PurePath(in_file).parts[-1:][0]
-    if file_name[-4:] == ".csv":
-        file_name = file_name[:-4]
-        if no_extension == False:
-            file_name = file_name + ".parquet"
-    log.info("validate_in_file ({0}) <<".format(file_name))
-    return file_name
+    fi_name = None
+    try:
+        if not os.path.isfile(in_file):
+            msg = "The csv input file doesn't exist (" + in_file + ")"
+            log.fatal(msg)
+            sys.exit(1)
+        fi = os.path.basename(in_file)
+        fi_name = os.path.splitext(fi)[0] + ".parquet"
+    except Exception as ex:
+        log.error("validate_in_file - Exception - {e}".format(e=ex))
+
+    log.info("validate_in_file ({0}) <<".format(fi_name))
+    return fi_name
 
 # ----------------------------------------
 # verify_out_dir
@@ -445,6 +446,81 @@ def read_table(table_path):
     return rv
 
 # ----------------------------------------
+# soc
+# ----------------------------------------
+def soc(csv_path,hdfs_host):
+    """
+
+    :param csv_path:
+    :param hdfs_host:
+    :return:
+    """
+    log = logging.getLogger('create_table_from_csv')
+    log.info("soc >>")
+    log.debug("Data path: {p}".format(p=csv_path))
+
+    table_name = "soc"
+    hdfs_dir = "/test/soc/compare/input/provider=NOWTV/proposition=NOWTV/activityType=STREAM_STOP"
+
+    rv = 1
+    spark, sqlContext, spark_context = None, None, None
+    try:
+        spark, sqlContext, spark_context = start_spark_session()
+
+        abs_path = os.path.abspath(csv_path)
+        df = spark.read.csv('file://{s}'.format(s=abs_path), header=True, mode="DROPMALFORMED")
+
+        #col_names = csv_file.schema.names
+        #fields = [StructField(field_name, StringType(), True) for field_name in col_names]
+        #fields[13].dataType = LongType()
+        #schema = StructType(fields)
+
+        df = df.withColumn("streamPosition", df.streamPosition.cast(LongType()))
+
+        hdfs_file = "{hh}{d}/{t}".format(hh=hdfs_host,d=hdfs_dir,t=table_name)
+        log.debug("HDFS path = {p}".format(p=hdfs_file))
+
+        df.write.parquet(hdfs_file, mode='overwrite')
+        rv = 0
+
+        df = spark.read.format("parquet").load(hdfs_file)
+        df.show(20, False)
+        df.printSchema()
+
+
+    #| -- activityTimestamp: string(nullable=true)
+    #| -- applicationId: string(nullable=true)
+    #| -- deviceId: string(nullable=true)
+    #| -- devicePool: string(nullable=true)
+    #| -- generatedId: string(nullable=true)
+    #| -- geoIP: struct(nullable=true)
+    #| | -- ipAddress: string(nullable=true)
+    #| -- householdId: string(nullable=true)
+    #| -- ipAddress: string(nullable=true)
+    #| -- outcome: string(nullable=true)
+    #| -- personaId: string(nullable=true)
+    #| -- providerTerritory: string(nullable=true)
+    #| -- providerVariantId: string(nullable=true)
+    #| -- serviceKey: string(nullable=true)
+    #| -- streamPosition: long(nullable=true)
+    #| -- streamingTicket: string(nullable=true)
+    #| -- subscriptionType: string(nullable=true)
+    #| -- userId: string(nullable=true)
+    #| -- userType: string(nullable=true)
+    #| -- videoId: string(nullable=true)
+
+
+    except Exception as ex:
+        msg = "Unexpected exception: {0}".format(str(ex))
+        log.fatal(msg)
+        print(msg)
+    finally:
+        if spark is not None:
+            spark.stop()
+    log.info("soc <<")
+    return rv
+
+# ----------------------------------------
 # main
 # ----------------------------------------
 def main(option):
@@ -477,6 +553,8 @@ def main(option):
         if rv != 0:
             log.error("Table creation in error.")
 
+    elif option.soc:
+        rv = soc(option.soc[0], hdfs_host=hdfs_host)
     elif option.tables_choices == "dlq-daily-checks":
         rv = create_dlq_table_with_schema(hdfs_host)
     elif option.tables_choices == "ingestion-timestamp-change":
@@ -511,6 +589,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Hadoop test table creation.")
 
     tables_choices = ['integration-daily-check', "dlq-daily-checks", "table-column-in-seconds", "ingestion-timestamp-change"]
+    parser.add_argument("--soc"
+                        ,"-soc"
+                        , nargs=1
+                        , help="File to the SOC csv data file.")
+
     parser.add_argument("--tables_choices"
                         ,"-tc"
                         , choices=tables_choices
